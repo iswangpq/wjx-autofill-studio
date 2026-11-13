@@ -401,3 +401,65 @@ class TestVerifyOpenText(unittest.TestCase):
                       "<div class='label' for='q1_2'>女</div></div>", "x")
         self.assertEqual(r["text_questions"], {})
         self.assertEqual(r["payload"]["ans"]["__text"], {})
+
+
+MULTI_TEXT_HTML = """<html><body>
+<div class='field ui-field-contain' topic='1'><div class='topichtml'>1. 您的性别：</div>
+ <input type='radio' id='q1_1' name='q1'><div class='label' for='q1_1'>男</div>
+ <input type='radio' id='q1_2' name='q1'><div class='label' for='q1_2'>女</div></div>
+<div class='field ui-field-contain' topic='2'><div class='topichtml'>2. 你的建议？（中间位置）</div>
+ <textarea id='q2_1' name='q2'></textarea></div>
+<div class='field ui-field-contain' topic='3'><div class='topichtml'>3. 几点睡：</div>
+ <input type='radio' id='q3_1' name='q3'><div class='label' for='q3_1'>10点</div>
+ <input type='radio' id='q3_2' name='q3'><div class='label' for='q3_2'>12点</div></div>
+<div class='field ui-field-contain' topic='4'><div class='topichtml'>4. 原因【多选】：</div>
+ <input type='checkbox' id='q4_1' name='q4'><div class='label' for='q4_1'>学习</div>
+ <input type='checkbox' id='q4_2' name='q4'><div class='label' for='q4_2'>游戏</div></div>
+<div class='field ui-field-contain' topic='5'><div class='topichtml'>5. 有什么好想法？（中间位置）</div>
+ <input type='text' id='q5' name='q5'></div>
+<div class='field ui-field-contain' topic='6'><div class='topichtml'>6. 熬夜天数：</div>
+ <input type='radio' id='q6_1' name='q6'><div class='label' for='q6_1'>不熬夜</div>
+ <input type='radio' id='q6_2' name='q6'><div class='label' for='q6_2'>每天</div></div>
+<div class='field ui-field-contain' topic='7'><div class='topichtml'>7. 精神状态：</div>
+ <input type='radio' id='q7_1' name='q7'><div class='label' for='q7_1'>没影响</div>
+ <input type='radio' id='q7_2' name='q7'><div class='label' for='q7_2'>困</div></div>
+<div class='field ui-field-contain' topic='8'><div class='topichtml'>8. 补充说明（末尾）：</div>
+ <input type='text' id='q8' name='q8'></div>
+<input type="text" placeholder="请注明..." id="matrixinput" />
+<input type="text" id="clipVoteCode" readonly="readonly"/>
+</body></html>"""
+
+
+class TestOpenTextReuse(unittest.TestCase):
+    """开放题位置无关、数量无关：第 2/5/8 题各一道，尾部还有全局输入框。"""
+
+    def test_three_text_questions_at_any_position(self):
+        meta = studio.parse_html(MULTI_TEXT_HTML)
+        found = [(q, m.get("topic")) for q, m in meta.items() if m["kind"] == "text"]
+        self.assertEqual(found, [("q2", "2"), ("q5", "5"), ("q8", "8")])
+
+    def test_text_ids_are_per_question_and_globals_filtered(self):
+        meta = studio.parse_html(MULTI_TEXT_HTML)
+        self.assertEqual(meta["q2"]["text_ids"], ["q2_1"])
+        self.assertEqual(meta["q5"]["text_ids"], ["q5"])
+        self.assertEqual(meta["q8"]["text_ids"], ["q8"],
+                         "末尾开放题不能把 matrixinput / clipVoteCode 收进来")
+
+    def test_non_text_questions_keep_their_options(self):
+        meta = studio.parse_html(MULTI_TEXT_HTML)
+        self.assertEqual(meta["q1"]["opts"], ["男", "女"])
+        self.assertEqual(meta["q4"]["kind"], "checkbox")
+
+    def test_sampler_generates_text_for_every_question(self):
+        import verify_open_text as v
+        r = v.analyze(MULTI_TEXT_HTML, "建议X")
+        s = core.Sampler(profile_dict=r["profile"])
+        ans = s._build()
+        self.assertEqual(set(ans["__text"]), {"q2", "q5", "q8"})
+        self.assertTrue(all(x == "建议X" for x in ans["__text"].values()))
+
+    def test_analyze_payload_and_report_cover_all(self):
+        import verify_open_text as v
+        r = v.analyze(MULTI_TEXT_HTML, "建议X")
+        self.assertEqual(set(r["payload"]["ans"]["__text"]), {"q2", "q5", "q8"})
+        self.assertEqual(r["report"]["summary"]["errors"], 0, r["report"]["errors"])

@@ -125,6 +125,16 @@
         "q7_2"
       ],
       "topic": "7"
+    },
+    "q8": {
+      "title": "你觉得熬夜对你有什么影响",
+      "kind": "text",
+      "opts": [],
+      "ids": [],
+      "text_ids": [
+        "q8"
+      ],
+      "topic": "8"
     }
   },
   "questions": {
@@ -178,6 +188,15 @@
       "mode": "trend",
       "dir": 1,
       "strength": 1
+    },
+    "q8": {
+      "mode": "text",
+      "texts": [
+        "建议增加午休时间",
+        "希望作息更规律",
+        "暂无特别建议"
+      ],
+      "blank_rate": 0.0
     }
   }
 }

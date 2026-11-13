@@ -357,7 +357,7 @@ APPLY_JS = r"""
       let el = null;
       for (const id of (tids[q] || [])) {
         const e = document.getElementById(id);
-        if (e) { el = e; break; }
+        if (e && !e.readOnly && !e.disabled) { el = e; break; }
       }
       if (!el) {
         const box = document.querySelector("div.field[topic='" + num + "']");
@@ -551,6 +551,28 @@ VERIFY_START_JS = r"""
     if (t && t.length < 30 && words.some(w => t.includes(w))) { el.click(); return 'text:' + t.slice(0, 24); }
   }
   return null;
+}
+"""
+
+# 提交前回读开放题输入框的真实 value，写进 CSV 备注，便于和问卷后台逐份核对。
+# 定位顺序与 APPLY_JS 保持一致，否则「靠题号兜底填中」的题会读不到。
+READBACK_JS = r"""
+(tids) => {
+  const out = {};
+  for (const [q, ids] of Object.entries(tids || {})) {
+    let el = null;
+    for (const id of ids) {
+      const e = document.getElementById(id);
+      if (e && !e.readOnly && !e.disabled) { el = e; break; }
+    }
+    if (!el) {
+      const num = (q.match(/\d+/) || [''])[0];
+      const box = document.querySelector("div.field[topic='" + num + "']");
+      if (box) el = box.querySelector('textarea, input[type=text]');
+    }
+    out[q] = el ? el.value : null;
+  }
+  return out;
 }
 """
 
@@ -839,6 +861,18 @@ async def submit_one(idx, browser, limiter, sampler, results):
             missing = [q for q, v in applied.items() if isinstance(v, str) and v.startswith("0/")]
             if missing:
                 notes.append(f"页面未找到这些题的选项，问卷可能改版: {','.join(missing)}")
+            # 开放题：回读真实 value 记进结果，方便与问卷后台逐份核对
+            if answers.get("__text"):
+                try:
+                    rb = await page.evaluate(
+                        READBACK_JS,
+                        {q: payload["textIds"].get(q, []) for q in answers["__text"]})
+                    detail = ", ".join(
+                        f"{q}={rb.get(q)!r}" if rb.get(q) is not None else f"{q}=<未读到>"
+                        for q in answers["__text"])
+                    notes.append(f"开放题实际填写: {detail}")
+                except Exception as e:
+                    notes.append(f"开放题回读失败: {type(e).__name__}")
             await page.wait_for_timeout(350)
             for _ in range(10):
                 btn = page.locator("#ctlNext")

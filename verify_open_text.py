@@ -85,7 +85,10 @@ async def verify_dom(page_html, payload, text_questions, sample_text):
               const out = {};
               for (const [q, ids] of Object.entries(tids || {})) {
                 let el = null;
-                for (const id of ids) { const e = document.getElementById(id); if (e) { el = e; break; } }
+                for (const id of ids) {
+                  const e = document.getElementById(id);
+                  if (e && !e.readOnly && !e.disabled) { el = e; break; }
+                }
                 if (!el) {   // 与 APPLY_JS 的兜底保持一致
                   const num = (q.match(/\\d+/) || [''])[0];
                   const box = document.querySelector("div.field[topic='" + num + "']");

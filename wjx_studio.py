@@ -38,6 +38,11 @@ _proc_lock = threading.Lock()
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
+# 问卷星页面尾部的全局输入框，不属于任何一道题，收集 text_ids 时必须排除，
+# 否则开放题恰好在最后一题时会被塞进这些 id，顺序一变就填到别人的框里。
+GLOBAL_INPUT_IDS = {"matrixinput", "clipvotecode", "clipvote", "captcha", "verifycode"}
+GLOBAL_INPUT_WORDS = ("captcha", "verify", "votecode", "clipvote", "matrixinput")
+
 
 # ------------------------- 问卷题目识别 -------------------------
 
@@ -103,17 +108,35 @@ def parse_html(page_html):
                 }
         else:
             # 没有 radio/checkbox：填空/简答/开放题。
-            # 收集真实 textarea / input[type=text] 的 id，供 APPLY_JS 精确定位；
-            # 只靠 div.field[topic=N] 猜位置在问卷改版时会静默填不中。
-            text_ids = []
+            # 收集真实输入框 id 供 APPLY_JS 精确定位。注意 re.split 的最后一个题块会
+            # 带上页面尾部的全局元素（matrixinput / clipVoteCode 等），必须过滤并按题号排序，
+            # 否则开放题在末尾时会被塞进别人的 id，顺序一变就填错框。
+            ranked = []
             for tm2 in re.finditer(r"<(textarea|input)\b([^>]*)>", block, re.I):
                 tag = tm2.group(1).lower()
-                attrs = dict(re.findall(r"([\w-]+)\s*=\s*['\"]([^'\"]*)['\"]", tm2.group(2)))
+                raw = tm2.group(2)
+                attrs = dict(re.findall(r"([\w-]+)\s*=\s*['\"]([^'\"]*)['\"]", raw))
                 typ = (attrs.get("type") or ("textarea" if tag == "textarea" else "text")).lower()
                 if typ not in ("text", "textarea", "search", "tel", "email", "number", ""):
                     continue
+                if "readonly" in raw.lower() or "disabled" in raw.lower():
+                    continue                      # clipVoteCode 之类只读系统字段
                 oid = attrs.get("id") or attrs.get("name") or ""
-                if oid and oid not in text_ids:
+                low = oid.lower()
+                if not oid or low in GLOBAL_INPUT_IDS or any(w in low for w in GLOBAL_INPUT_WORDS):
+                    continue
+                # 与本题号匹配的排最前；明显属于别的题号（q\d+）的降权
+                if low == f"q{num}" or low.startswith(f"q{num}_"):
+                    rank = 0
+                elif re.match(r"q\d+", low):
+                    rank = 2
+                else:
+                    rank = 1
+                ranked.append((rank, oid))
+            ranked.sort(key=lambda x: x[0])       # 稳定排序，同分保持页面顺序
+            text_ids = []
+            for _, oid in ranked:
+                if oid not in text_ids:
                     text_ids.append(oid)
             meta[f"q{num}"] = {"title": title, "kind": "text", "opts": [], "ids": [],
                                "text_ids": text_ids, "topic": num}
