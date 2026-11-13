@@ -373,3 +373,31 @@ class TestConcurrencyCap(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             core.resolve_concurrency(8)
         self.assertIn("并发收敛", buf.getvalue())
+
+
+class TestVerifyOpenText(unittest.TestCase):
+    """开放题离线自检的纯函数部分。"""
+
+    def test_analyze_detects_text_question_and_ids(self):
+        import verify_open_text as v
+        r = v.analyze(SAMPLE_HTML, "建议A")
+        self.assertIn("q3", r["text_questions"])
+        self.assertEqual(r["text_questions"]["q3"]["text_ids"], ["q3_1"])
+        self.assertEqual(r["payload"]["ans"]["__text"]["q3"], "建议A")
+        self.assertEqual(r["payload"]["textIds"]["q3"], ["q3_1"])
+
+    def test_analyze_profile_has_no_errors(self):
+        import verify_open_text as v
+        r = v.analyze(SAMPLE_HTML, "建议A")
+        self.assertEqual(r["report"]["summary"]["errors"], 0, r["report"]["errors"])
+
+    def test_analyze_no_open_text(self):
+        import verify_open_text as v
+        r = v.analyze("<div class='field ui-field-contain' topic='1'>"
+                      "<div class='topichtml'>1. 性别</div>"
+                      "<input type='radio' id='q1_1' name='q1'>"
+                      "<div class='label' for='q1_1'>男</div>"
+                      "<input type='radio' id='q1_2' name='q1'>"
+                      "<div class='label' for='q1_2'>女</div></div>", "x")
+        self.assertEqual(r["text_questions"], {})
+        self.assertEqual(r["payload"]["ans"]["__text"], {})
