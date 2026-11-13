@@ -26,3 +26,6 @@ _diag_shots/
 *.swp
 .DS_Store
 Thumbs.db
+
+# 本地备份配置（不入库）
+answer_profile.backup.json

@@ -23,6 +23,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import wjx_autofill as core
+from validate_profile import (validate_profile, MAX_CONCURRENCY,
+                              RECOMMENDED_CONCURRENCY, CONCURRENCY_NOTE)
 
 BASE = Path(__file__).parent
 PROFILE = BASE / "answer_profile.json"
@@ -100,8 +102,21 @@ def parse_html(page_html):
                     "kind": g["kind"], "opts": g["opts"], "ids": g["ids"], "topic": num,
                 }
         else:
-            # 没有 radio/checkbox：填空、简答、或特殊题型，统一按文本填写兜底
-            meta[f"q{num}"] = {"title": title, "kind": "text", "opts": [], "ids": [], "topic": num}
+            # 没有 radio/checkbox：填空/简答/开放题。
+            # 收集真实 textarea / input[type=text] 的 id，供 APPLY_JS 精确定位；
+            # 只靠 div.field[topic=N] 猜位置在问卷改版时会静默填不中。
+            text_ids = []
+            for tm2 in re.finditer(r"<(textarea|input)\b([^>]*)>", block, re.I):
+                tag = tm2.group(1).lower()
+                attrs = dict(re.findall(r"([\w-]+)\s*=\s*['\"]([^'\"]*)['\"]", tm2.group(2)))
+                typ = (attrs.get("type") or ("textarea" if tag == "textarea" else "text")).lower()
+                if typ not in ("text", "textarea", "search", "tel", "email", "number", ""):
+                    continue
+                oid = attrs.get("id") or attrs.get("name") or ""
+                if oid and oid not in text_ids:
+                    text_ids.append(oid)
+            meta[f"q{num}"] = {"title": title, "kind": "text", "opts": [], "ids": [],
+                               "text_ids": text_ids, "topic": num}
     return meta
 
 
@@ -210,6 +225,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(read_profile())
         elif path == "/api/env":
             self._send(check_env())
+        elif path == "/api/limits":
+            self._send({"max": MAX_CONCURRENCY, "recommended": RECOMMENDED_CONCURRENCY,
+                        "note": CONCURRENCY_NOTE})
         elif path == "/api/log":
             text = ""
             if LOG.exists():
@@ -243,6 +261,9 @@ class Handler(BaseHTTPRequestHandler):
                 prof = body.get("profile") or read_profile()
                 s = core.Sampler(profile_dict=prof)
                 self._send(core.distribution(s, int(body.get("total", 300))))
+
+            elif path == "/api/validate":
+                self._send(validate_profile(body.get("profile") or read_profile()))
 
             elif path == "/api/save":
                 save_profile(body.get("profile") or {})

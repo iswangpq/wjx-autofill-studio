@@ -122,9 +122,10 @@
     <div class="grid3">
       <div class="fld"><label class="f">倾斜强度 <span id="sharpVal">2.0</span></label><input type="range" id="sharp" min="0" max="5" step="0.1" value="2"></div>
       <div class="fld"><label class="f">填写份数</label><input type="number" id="total" min="1" max="500" value="20"></div>
-      <div class="fld"><label class="f">同时运行几个</label><input type="number" id="conc" min="1" max="10" value="3"></div>
+      <div class="fld"><label class="f">同时运行几个</label><select id="conc"></select></div>
       <div class="fld"><label class="f">无界面运行</label><div style="padding-top:6px"><label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="headless" style="width:auto"> 后台跑（不弹浏览器）</label></div></div>
     </div>
+    <div class="msg" id="concNote" style="margin-top:10px"></div>
     <div class="gauge">
       <span class="lab">模拟 300 份后的整体倾向</span>
       <div class="track"><div class="pin" id="sevPin" style="left:50%"></div></div>
@@ -135,6 +136,10 @@
 
   <section class="card">
     <div class="step"><span class="num">3</span><h2>每道题怎么跟随</h2><span class="tip">默认已配好，条形图是模拟出来的实际占比</span></div>
+    <div style="margin-bottom:10px">
+      <button class="mini" id="btnCheck">配置体检（核对方向 / 失配规则）</button>
+    </div>
+    <div class="msg" id="checkReport" hidden></div>
     <div id="qlist"></div>
   </section>
 
@@ -154,6 +159,7 @@
 
 <script>
 let state = null, pvTimer = null, svTimer = null;
+let limits = {max: 4, recommended: 3, note: ''};
 const $ = id => document.getElementById(id);
 
 async function api(path, body){
@@ -178,9 +184,21 @@ function renderTop(){
   $('sharp').value = state.sharpness;
   $('sharpVal').textContent = Number(state.sharpness).toFixed(1);
   $('total').value = state.total ?? 20;
-  $('conc').value = state.concurrency ?? 3;
+  // 老配置里若超过上限，收敛到允许范围，避免选到不存在的 option
+  const c = Math.min(Math.max(1, Number(state.concurrency ?? limits.recommended)), limits.max);
+  state.concurrency = c;
+  $('conc').value = String(c);
   $('headless').checked = !!state.headless;
   $('url').value = state.url || '';
+}
+
+function buildConcOptions(){
+  const sel = $('conc');
+  sel.innerHTML = Array.from({length: limits.max}, (_, i) => {
+    const n = i + 1;
+    return `<option value="${n}">${n} 个${n === limits.recommended ? '（推荐）' : ''}</option>`;
+  }).join('');
+  $('concNote').textContent = limits.note;
 }
 
 function ratioPercents(cfg, n){
@@ -198,9 +216,16 @@ function cardHtml(q, m){
   const kindName = {radio:'单选', checkbox:'多选', text:'填空'}[m.kind] || '其它';
 
   if (m.kind === 'text' || n === 0){
+    const lines = (cfg.texts || []).join('\n');
+    const br = Number(cfg.blank_rate ?? 0);
     return `<div class="qcard" data-q="${esc(q)}">
       <div class="qtop"><span class="qtag">${esc(q)}</span><span class="qtitle">${esc(m.title)}</span><span class="qkind">${kindName}</span></div>
-      <div class="msg">按重心自动生成文字，不参与选项分布。</div></div>`;
+      <div class="msg">开放题：每行写一条，每份随机取一条。留空则使用中性的通用短句（不会答非所问）。不参与选项分布和整体倾向值。</div>
+      <textarea data-texts placeholder="建议增加午休时间&#10;希望食堂延长开放&#10;暂无" style="width:100%;min-height:88px;box-sizing:border-box">${esc(lines)}</textarea>
+      <div class="line" style="margin-top:6px">留白比例（非必填题才设，0~1）：
+        <input type="number" data-blank min="0" max="1" step="0.1" value="${br}" style="width:72px">
+      </div>
+    </div>`;
   }
 
   const dirBtns = m.kind === 'checkbox' ? '' :
@@ -270,7 +295,7 @@ function changed(){ renderTop(); renderQuestions(); schedulePreview(); scheduleS
 $('bias').addEventListener('input', e => { state.bias = Number(e.target.value); $('biasVal').textContent = state.bias.toFixed(2); $('biasDesc').textContent = biasText(state.bias); schedulePreview(); scheduleSave(); });
 $('sharp').addEventListener('input', e => { state.sharpness = Number(e.target.value); $('sharpVal').textContent = state.sharpness.toFixed(1); schedulePreview(); scheduleSave(); });
 $('total').addEventListener('change', e => { state.total = Math.max(1, Number(e.target.value)||20); scheduleSave(); });
-$('conc').addEventListener('change', e => { state.concurrency = Math.max(1, Number(e.target.value)||3); scheduleSave(); });
+$('conc').addEventListener('change', e => { state.concurrency = Math.max(1, Number(e.target.value) || limits.recommended); scheduleSave(); });
 $('headless').addEventListener('change', e => { state.headless = e.target.checked; scheduleSave(); });
 
 // 题目卡片事件委托
@@ -311,7 +336,14 @@ $('qlist').addEventListener('input', e => {
     const n = state.questions_meta[q].opts.length;
     cfg.mode = 'multi';
     cfg.prob = Array.from({length:n}, (_,i) => +(Number(card.querySelector(`[data-prob="${i}"]`).value)/100).toFixed(2));
+  } else if (e.target.dataset.texts !== undefined){
+    cfg.mode = 'text';
+    cfg.texts = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+  } else if (e.target.dataset.blank !== undefined){
+    cfg.mode = 'text';
+    cfg.blank_rate = Math.min(1, Math.max(0, Number(e.target.value) || 0));
   } else return;
+  // 不重绘卡片：否则正在输入的 textarea 会失焦
   schedulePreview(); scheduleSave();
 });
 
@@ -338,6 +370,30 @@ async function doParse(body){
 $('btnFetch').addEventListener('click', () => doParse({url: $('url').value.trim()}));
 $('btnParseHtml').addEventListener('click', () => doParse({url: $('url').value.trim(), html: $('rawHtml').value}));
 
+// 配置体检：只报确定事实，不猜选项语义、不自动改配置
+function renderCheck(r){
+  const box = $('checkReport');
+  box.hidden = false;
+  if (!r || r.error){ box.className = 'msg err'; box.textContent = (r && r.error) || '体检失败'; return; }
+  const s = r.summary || {};
+  const parts = [`<b>${r.ok ? '✓ 配置结构没问题' : '✗ 有结构错误，真跑前请修'}</b> · 题目 ${s.questions ?? 0} 道 · 错误 ${s.errors ?? 0} · 提醒 ${s.warnings ?? 0}`];
+  if ((r.errors||[]).length)
+    parts.push('<div style="margin-top:8px;color:#b42318">' + r.errors.map(e=>`✗ ${esc(e.q||'全局')}：${esc(e.msg)}`).join('<br>') + '</div>');
+  if ((r.warnings||[]).length)
+    parts.push('<div style="margin-top:8px;color:#8a6d00">' + r.warnings.map(e=>`! ${esc(e.q||'全局')}：${esc(e.msg)}`).join('<br>') + '</div>');
+  if ((r.hints||[]).length)
+    parts.push('<div style="margin-top:10px"><b>方向核对</b>（按当前参数推出的确定事实，请对照选项文字看一眼）：<br>'
+      + r.hints.map(h=>`${esc(h.q)} ${esc(h.title)}：dir=${h.dir} → ${esc(h.focus)}`).join('<br>') + '</div>');
+  box.className = 'msg ' + (r.ok ? 'ok' : 'err');
+  box.innerHTML = parts.join('');
+}
+async function checkConfig(){
+  const box = $('checkReport');
+  box.hidden = false; box.className = 'msg'; box.textContent = '正在体检…';
+  renderCheck(await api('/api/validate', {profile: state}));
+}
+$('btnCheck').addEventListener('click', checkConfig);
+
 // 运行控制
 $('btnSave').addEventListener('click', async () => { await save(); $('barHint').textContent = '✓ 已保存到 answer_profile.json'; });
 $('btnRun').addEventListener('click', async () => {
@@ -360,6 +416,8 @@ async function pollLog(){
 
 (async function init(){
   state = await api('/api/profile');
+  limits = await api('/api/limits');
+  buildConcOptions();
   const env = await api('/api/env');
   $('envState').textContent = env.ok ? '环境就绪' : '⚠ 缺依赖';
   $('envState').className = 'pill' + (env.ok ? ' on' : ' warn');

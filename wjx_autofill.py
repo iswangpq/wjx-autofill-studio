@@ -26,6 +26,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from throttle import AdaptiveLimiter
+
 # playwright 延迟到真正开浏览器时才导入，这样 --preview 不装依赖也能跑
 
 BASE_DIR = Path(__file__).parent
@@ -41,6 +43,11 @@ CFG = {
     "MAX_RESUBMIT": 3,       # 提交后没结果时，最多补点几次提交
     "KEEP_WINDOW_ON_FAIL": False,   # 失败时是否保留浏览器窗口（默认否，脚本自己收尾）
     "BROWSER_CHANNEL": "msedge",
+    "ADAPTIVE": True,              # 检测到风控/验证时自动降并发、拉长间隔
+    "ADAPTIVE_MIN_CONCURRENCY": 1,
+    "THROTTLE_COOLDOWN": 6.0,      # 触发后新任务暂停的秒数
+    "THROTTLE_GAP_FACTOR": 2.5,    # 间隔放大倍数
+    "ADAPTIVE_RECOVER_AFTER": 5,   # 连续几份干净成功后恢复一档
 }
 
 # UA 必须和实际内核一致：用 Edge 就别声称 Chrome，反指纹会因此判定高风险
@@ -92,6 +99,8 @@ FALLBACK_META = {
 }
 
 NEUTRAL_HINT = ("性别", "年龄", "年级", "专业", "学院", "身份", "地区", "城市", "学校", "学历", "是否")
+# 开放题默认文案：中性、与任何问卷主题都不冲突，别再冒出「经常熬夜」这种答非所问的内容
+GENERIC_TEXTS = ("暂无", "无特别建议", "整体还可以。", "希望后续继续优化。", "测试填写")
 
 
 def default_question_cfg(m):
@@ -100,7 +109,7 @@ def default_question_cfg(m):
     if m["kind"] == "checkbox":
         return {"mode": "multi", "prob": [0.5] * n, "min": 1, "max": min(3, n)}
     if m["kind"] == "text":
-        return {"mode": "text"}
+        return {"mode": "text", "texts": [], "blank_rate": 0.0}
     if any(k in m["title"] for k in NEUTRAL_HINT):
         return {"mode": "ratio", "ratio": [round(1 / n, 4)] * n}
     return {"mode": "trend", "dir": 1, "strength": 1.0}
@@ -197,15 +206,25 @@ class Sampler:
         return sorted(picked)
 
     def _pick_text(self, cfg):
+        # 优先级：自定义文本池 > 可选「跟随重心」> 中性通用池
         pool = cfg.get("texts")
         if not pool:
             b = float(self.profile.get("bias", 0.0))
-            if b > 0.2:
-                pool = ["经常熬夜，白天没精神。", "睡得比较晚，状态一般。", "作息不太规律。"]
-            elif b < -0.2:
-                pool = ["作息规律，睡眠充足。", "很少熬夜，状态不错。", "早睡早起，挺好。"]
+            if cfg.get("follow_bias"):
+                if b > 0.2:
+                    pool = ["经常熬夜，白天没精神。", "睡得比较晚，状态一般。", "作息不太规律。"]
+                elif b < -0.2:
+                    pool = ["作息规律，睡眠充足。", "很少熬夜，状态不错。", "早睡早起，挺好。"]
+                else:
+                    pool = ["一般", "还行", "无", "测试"]
             else:
-                pool = ["一般", "还行", "无", "测试"]
+                pool = list(GENERIC_TEXTS)
+        try:
+            br = float(cfg.get("blank_rate", 0.0))
+        except (TypeError, ValueError):
+            br = 0.0
+        if br > 0 and random.random() < br:
+            return ""      # 允许有意识地留白（非必填开放题）
         return random.choice(pool)
 
     def _build(self):
@@ -307,23 +326,39 @@ APPLY_JS = r"""
     const ids = Array.isArray(v) ? v.map(optId) : [optId(v)];
     out[q] = ids.filter(clickOpt).length + '/' + ids.length;
   }
-  // 填空题：按题号定位容器，写入配置生成的文本
+  // 开放题 / 填空题：优先用抓取到的真实 id 精确定位，找不到再退回题号容器
+  const handled = new Set();
   if (ans.__text) {
+    const tids = payload.textIds || {};
     for (const [q, val] of Object.entries(ans.__text)) {
       const num = (q.match(/\d+/) || [''])[0];
-      const box = document.querySelector("div.field[topic='" + num + "']");
-      if (!box) continue;
-      const el = box.querySelector('textarea, input[type=text]');
-      if (!el) continue;
+      let el = null;
+      for (const id of (tids[q] || [])) {
+        const e = document.getElementById(id);
+        if (e) { el = e; break; }
+      }
+      if (!el) {
+        const box = document.querySelector("div.field[topic='" + num + "']");
+        if (box) el = box.querySelector('textarea, input[type=text]');
+      }
+      if (!el) {
+        for (const id of [q + '_1', 'q' + num + '_1', 'txt' + num]) {
+          const e = document.getElementById(id);
+          if (e && (e.tagName === 'TEXTAREA' || e.type === 'text')) { el = e; break; }
+        }
+      }
+      if (!el) { out[q] = '0/1'; continue; }   // 填不中要报出来，不能静默
+      handled.add(el);
+      if (val === '') { out[q] = 'blank'; continue; }
       el.value = val;
       el.dispatchEvent(new Event('input', {bubbles: true}));
       el.dispatchEvent(new Event('change', {bubbles: true}));
       out[q] = 'text';
     }
   }
-  // 兜底：页面上其它可见填空
+  // 兜底：页面上其它可见填空（已精确填过的元素不要被覆盖，尤其别破坏留白）
   document.querySelectorAll('input[type=text], textarea').forEach(el => {
-    if (el.offsetParent === null || el.disabled || el.readOnly || el.id === 'matrixinput' || el.value) return;
+    if (handled.has(el) || el.offsetParent === null || el.disabled || el.readOnly || el.id === 'matrixinput' || el.value) return;
     const hint = ((el.name||'') + ' ' + (el.id||'') + ' ' + (el.placeholder||'')).toLowerCase();
     if (/captcha|verify|验证码/.test(hint)) return;
     let v = '测试';
@@ -635,7 +670,7 @@ async def handle_captcha(page, notes, state):
                 continue
 
 
-async def wait_result(page, notes, timeout=150):
+async def wait_result(page, notes, timeout=150, limiter=None):
     """提交后等结果。判定优先级：URL 跳转 > 风控提示 > 正文文案 > 验证弹窗。
 
     - 成功页一定跳到 /wjx/join/completemobile2.aspx，比中文文案可靠
@@ -653,6 +688,12 @@ async def wait_result(page, notes, timeout=150):
     click_round = 0
     last_progress = started      # 最近一次「有进展」的时刻
     last_try = started
+
+    def _signal(reason):
+        # 即时上报，不等这份结束，好让其它并发任务马上减速
+        if limiter:
+            limiter.throttle(reason)
+
     while time.time() < hard_deadline:
         # 1) URL 判定：主 frame 和所有子 frame 都看
         try:
@@ -682,8 +723,10 @@ async def wait_result(page, notes, timeout=150):
             last_progress = time.time()
             if hint.get("kind") == "blocked":
                 notes.append(f"被限制[{hint.get('text','')}]")
+                _signal("IP/频率限制")
                 return "ip_blocked"
             notes.append(f"需要安全校验[{hint.get('text','')}]，点确认后重提交")
+            _signal("问卷星要求安全校验")
             await dismiss_popups(page, notes)
             await page.wait_for_timeout(400)
             try:
@@ -714,6 +757,7 @@ async def wait_result(page, notes, timeout=150):
             if not warned:
                 warned = True
                 notes.append("检测到安全验证，正在自动尝试；没过的话请在窗口里手动过一次")
+                _signal("阿里云智能验证")
                 try:
                     await page.bring_to_front()
                 except Exception:
@@ -740,20 +784,22 @@ async def wait_result(page, notes, timeout=150):
         # 6) 一直没进展就快速放弃，别把并发卡死几分钟
         if time.time() - last_progress > CFG["IDLE_TIMEOUT"]:
             notes.append(f"页面 {CFG['IDLE_TIMEOUT']} 秒无响应，已跳过这一份")
+            _signal("页面无响应")
             return "no_response"
         await page.wait_for_timeout(900)
 
     return "need_verify" if verify_clicked else "timeout"
 
 
-async def submit_one(idx, browser, sem, sampler, results):
-    async with sem:
+async def submit_one(idx, browser, limiter, sampler, results):
+    async with limiter:
         notes, started, status = [], datetime.now(), "unknown"
         answers = await sampler.next_answers()
         as_text = fmt_answers(answers)
         ids_map = {q: (m.get("ids") or [f"{q}_{i + 1}" for i in range(len(m.get("opts") or []))])
                    for q, m in sampler.meta.items()}
-        payload = {"ans": answers, "ids": ids_map}
+        text_ids_map = {q: (m.get("text_ids") or []) for q, m in sampler.meta.items()}
+        payload = {"ans": answers, "ids": ids_map, "textIds": text_ids_map}
         proxy ={"server": CFG["PROXIES"][(idx - 1) % len(CFG["PROXIES"])]} if CFG["PROXIES"] else None
         ua = UA_EDGE if CFG["BROWSER_CHANNEL"] == "msedge" else UA_CHROME
         ctx = await browser.new_context(user_agent=ua,
@@ -799,6 +845,8 @@ async def submit_one(idx, browser, sem, sampler, results):
                     hint = None
                 if hint and hint.get("kind") == "recheck":
                     notes.append(f"风控提示[{hint.get('text','')}]")
+                    if limiter:
+                        limiter.throttle("问卷星要求安全校验")
                     await dismiss_popups(page, notes)
                     await page.wait_for_timeout(400)
                     try:
@@ -808,12 +856,13 @@ async def submit_one(idx, browser, sem, sampler, results):
                         pass
                 else:
                     await dismiss_popups(page, notes)
-                status = await wait_result(page, notes, timeout=CFG["VERIFY_TIMEOUT"])
+                status = await wait_result(page, notes, timeout=CFG["VERIFY_TIMEOUT"], limiter=limiter)
                 break
         except Exception as e:
             status = "error"
             notes.append(f"{type(e).__name__}: {str(e)[:160]}")
         finally:
+            limiter.finish(status)
             # 窗口一律由脚本自己收尾：留着不关的话你得手动关，还挡着下一份
             keep = (status in ("need_verify", "timeout") and not CFG["HEADLESS"]
                     and CFG["KEEP_WINDOW_ON_FAIL"])
@@ -830,7 +879,7 @@ async def submit_one(idx, browser, sem, sampler, results):
             results.append(row)
             cn = STATUS_CN.get(status, status)
             print(f"[{idx:>3}/{CFG['TOTAL']}] {cn:<10} {row['耗时秒']:>5}s  {as_text}  {row['备注'][:80]}", flush=True)
-            await asyncio.sleep(random.uniform(CFG["MIN_GAP"], CFG["MAX_GAP"]))
+            await asyncio.sleep(random.uniform(*limiter.gap()))
 
 
 async def run(sampler):
@@ -857,11 +906,21 @@ async def run(sampler):
                 last_err = e
         if browser is None:
             raise RuntimeError(f"没找到可用浏览器（{last_err}）。执行 playwright install chromium，或安装 Edge / Chrome")
-        sem = asyncio.Semaphore(CFG["CONCURRENCY"])
+        limiter = AdaptiveLimiter(
+            CFG["CONCURRENCY"],
+            min_limit=CFG["ADAPTIVE_MIN_CONCURRENCY"],
+            cooldown=CFG["THROTTLE_COOLDOWN"],
+            throttle_gap_factor=CFG["THROTTLE_GAP_FACTOR"],
+            recover_after=CFG["ADAPTIVE_RECOVER_AFTER"],
+            base_min_gap=CFG["MIN_GAP"], base_max_gap=CFG["MAX_GAP"],
+            enabled=CFG["ADAPTIVE"])
+        mode = "风控触发时自动降速" if limiter.enabled else "已关闭（固定并发 + 固定间隔）"
+        print(f"[自适应] 初始并发 {limiter.limit}，{mode}", flush=True)
         await asyncio.gather(
-            *(submit_one(i + 1, browser, sem, sampler, results) for i in range(CFG["TOTAL"])),
+            *(submit_one(i + 1, browser, limiter, sampler, results) for i in range(CFG["TOTAL"])),
             return_exceptions=True)
         await browser.close()
+    print(f"[自适应统计] {limiter.snapshot()}", flush=True)
     results.sort(key=lambda r: r["序号"])
     out = BASE_DIR / CFG["OUT_CSV"]
     with out.open("w", newline="", encoding="utf-8-sig") as f:
@@ -879,6 +938,8 @@ def main():
     ap.add_argument("--concurrency", type=int)
     ap.add_argument("--headless", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-adaptive", action="store_true",
+                    help="关闭自适应节流，回到固定并发 + 固定间隔（便于 A/B 对比）")
     ap.add_argument("--preview", action="store_true", help="只离线看分布，不开浏览器")
     ap.add_argument("--profile", help="配置文件，默认 answer_profile.json")
     args = ap.parse_args()
@@ -908,6 +969,8 @@ def main():
         CFG["HEADLESS"] = True
     if args.dry_run:
         CFG["DRY_RUN"] = True
+    if args.no_adaptive:
+        CFG["ADAPTIVE"] = False
     if p.get("verify_timeout"):
         CFG["VERIFY_TIMEOUT"] = max(20, int(p["verify_timeout"]))
 
