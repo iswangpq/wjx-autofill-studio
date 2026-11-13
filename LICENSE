@@ -1,0 +1,46 @@
+MIT License
+
+Copyright (c) 2026 Wang Peiqi
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------------
+
+Usage Restriction / 使用限制
+
+本软件仅供作者本人对其拥有创建与管理权限的自有问卷进行自动化测试使用。
+The software is licensed for the author's own use only, to perform automated
+testing on survey questionnaires that the user has created and legally manages.
+
+The following uses are PROHIBITED and constitute a breach of this license:
+明确禁止将本软件用于以下目的，违者视为超出本许可证授权范围：
+
+1. Filling in or interfering with any third-party survey that you did not create
+   or do not have management rights to;
+   填写或干扰任何非本人创建、无管理权限的第三方问卷；
+2. Ballot-stuffing, volume-faking, fake reviews, or any act intended to distort
+   the statistical result of a real survey or vote;
+   刷票、刷量、刷单，或任何旨在影响真实调查/投票统计结果的行为；
+3. Any use that violates the laws of the People's Republic of China or the terms
+   of service of the survey platform.
+   任何违反中华人民共和国法律法规或问卷平台服务条款的用途。
+
+These restrictions are additional conditions on the grant above. Violation
+terminates your license and the use is not permitted hereunder.
+上述限制构成本授权之上的附加条件；违反即终止本许可证授权，相关使用行为不被许可。
