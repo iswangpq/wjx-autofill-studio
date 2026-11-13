@@ -213,6 +213,26 @@ def validate_profile(profile):
             if tids and not (isinstance(tids, list) and all(isinstance(x, str) for x in tids)):
                 add("error", q, "text_ids_bad", "text_ids 要是字符串数组（抓取到的输入框 id）")
 
+            # 复合题（一题多个输入框）：每个框一条文案
+            slots = int(m.get("slot_count") or len(tids or []) or 1)
+            slot_texts = cfg.get("slot_texts")
+            if slot_texts is not None:
+                if not isinstance(slot_texts, list):
+                    add("error", q, "slot_texts_bad", "slot_texts 要是数组（每个输入框一条文案列表）")
+                else:
+                    for i, pool in enumerate(slot_texts):
+                        if not isinstance(pool, list) or any(
+                                not isinstance(x, str) or not x.strip() for x in pool):
+                            add("error", q, "slot_texts_item_bad",
+                                f"slot_texts 第 {i + 1} 项要是非空字符串数组（每行一条）")
+                    if len(slot_texts) > slots:
+                        add("warn", q, "slot_texts_too_many",
+                            f"配了 {len(slot_texts)} 栏文案，但这题只有 {slots} 个输入框，多余的不会生效")
+            if slots > 1 and not slot_texts:
+                add("warn", q, "composite_text_no_slots",
+                    f"这题有 {slots} 个输入框（复合题），但没按框单独配文案；"
+                    "所有框会用同一批文案随机填，可能出现「姓名和建议填了同一句」")
+
     summary = {
         "questions": len(meta), "modes": counts, "bias_locked": locked,
         "trend_hints": len(hints), "errors": len(errors), "warnings": len(warnings),

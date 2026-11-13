@@ -32,18 +32,30 @@ def analyze(page_html, sample_text=SAMPLE_TEXT):
         q: m for q, m in meta.items()
         if m.get("kind") == "text" or not (m.get("opts") or [])
     }
-    rules = {
-        q: ({"mode": "text", "texts": [sample_text], "blank_rate": 0.0}
-            if q in text_questions else core.default_question_cfg(m))
-        for q, m in meta.items()
-    }
+    rules = {}
+    for q, m in meta.items():
+        if q in text_questions:
+            slots = int(m.get("slot_count") or len(m.get("text_ids") or []) or 1)
+            cfg = {"mode": "text", "texts": [sample_text], "blank_rate": 0.0}
+            if slots > 1:
+                # 复合题：每框一条独立文案，便于区分填对填错
+                cfg["slot_texts"] = [[f"{sample_text}{i + 1}"] for i in range(slots)]
+            rules[q] = cfg
+        else:
+            rules[q] = core.default_question_cfg(m)
     profile = {
         "url": "https://example.invalid/offline-check", "total": 1, "concurrency": 1,
         "bias": 0.0, "sharpness": 2.0,
         "questions_meta": meta, "questions": rules,
     }
     report = validate_profile(profile)
-    answers = {"__text": {q: sample_text for q in text_questions}}
+    answers = {"__text": {}}
+    for q in text_questions:
+        slots = int(meta[q].get("slot_count") or len(meta[q].get("text_ids") or []) or 1)
+        if slots > 1:
+            answers["__text"][q] = [f"{sample_text}{i + 1}" for i in range(slots)]
+        else:
+            answers["__text"][q] = sample_text
     payload = {
         "ans": answers,
         "ids": {q: (m.get("ids") or [f"{q}_{i+1}" for i in range(len(m.get("opts") or []))])
@@ -80,25 +92,8 @@ async def verify_dom(page_html, payload, text_questions, sample_text):
         await page.set_content(page_html, wait_until="domcontentloaded")
         applied = await page.evaluate(core.APPLY_JS, payload)
 
-        readback = await page.evaluate(
-            """(tids) => {
-              const out = {};
-              for (const [q, ids] of Object.entries(tids || {})) {
-                let el = null;
-                for (const id of ids) {
-                  const e = document.getElementById(id);
-                  if (e && !e.readOnly && !e.disabled) { el = e; break; }
-                }
-                if (!el) {   // 与 APPLY_JS 的兜底保持一致
-                  const num = (q.match(/\\d+/) || [''])[0];
-                  const box = document.querySelector("div.field[topic='" + num + "']");
-                  if (box) el = box.querySelector('textarea, input[type=text]');
-                }
-                if (!el) { out[q] = '<找不到元素>'; continue; }
-                out[q] = el.value;
-              }
-              return out;
-            }""", payload.get("textIds") or {})
+        # 回读复用核心的 READBACK_JS（与真跑同一套定位逻辑，不会两处漂移）
+        readback = await page.evaluate(core.READBACK_JS, payload.get("textIds") or {})
         await ctx.close()
         await browser.close()
         return applied, readback
@@ -120,7 +115,9 @@ def main():
     print(f"识别到 {len(meta)} 个可填项，其中开放题 {len(tq)} 道")
     for q, m in tq.items():
         tids = m.get("text_ids") or []
-        print(f"  {q}  {m.get('title','')[:40]}  text_ids={tids or '（没抓到，将按题号兜底）'}")
+        slots = int(m.get("slot_count") or len(tids) or 1)
+        extra = f"，{slots} 个输入框" if slots > 1 else ""
+        print(f"  {q}  {m.get('title','')[:40]}{extra}  text_ids={tids or '（没抓到，将按题号兜底）'}")
     print(f"配置体检：{report['summary']['errors']} error / {report['summary']['warnings']} warning")
     for e in report["errors"]:
         print(f"  ERROR {e['q'] or '全局'}: {e['msg']}")
@@ -136,10 +133,16 @@ def main():
     bad = []
     for q in tq:
         status = applied.get(q, "?")
-        value = readback.get(q, "<无>")
-        ok = status == "text" and value == args.text
-        flag = "✓" if ok else "✗"
-        print(f"  {flag} {q}  APPLY_JS={status}  回读={value!r}")
+        value = readback.get(q)
+        slots = int(meta[q].get("slot_count") or len(meta[q].get("text_ids") or []) or 1)
+        if slots > 1:
+            # 复合题：每个框都要填上对应文案，一个都不能漏
+            expect = " | ".join(f"{args.text}{i + 1}" for i in range(slots))
+            ok = status == "text" and value == expect
+            print(f"  {'✓' if ok else '✗'} {q}  APPLY_JS={status}  回读={value!r}  期望={expect!r}")
+        else:
+            ok = status == "text" and value == args.text
+            print(f"  {'✓' if ok else '✗'} {q}  APPLY_JS={status}  回读={value!r}")
         if not ok:
             bad.append(q)
     if bad:

@@ -218,10 +218,24 @@ function cardHtml(q, m){
   if (m.kind === 'text' || n === 0){
     const lines = (cfg.texts || []).join('\n');
     const br = Number(cfg.blank_rate ?? 0);
+    const slots = Number(m.slot_count ?? (m.text_ids || []).length ?? 1);
+    // 复合题（一题多个输入框）：每个框单独给文案池，避免所有框填同一句
+    const slotPools = Array.isArray(cfg.slot_texts) ? cfg.slot_texts : [];
+    const slotHtml = slots > 1 ? `
+      <div class="msg" style="margin-top:8px">本题有 <b>${slots}</b> 个输入框（复合题），下面按框分别配文案；
+        每一栏每行一条，每份在栏内随机取一条。某栏留空则该栏退回用上面的通用文案。</div>
+      ${Array.from({length: slots}, (_,i)=>`
+        <div class="line" style="display:block;margin-top:8px">
+          <div style="font-weight:600;margin-bottom:3px">第 ${i+1} 个输入框
+            <span style="font-weight:400;color:var(--muted)">（id: ${esc((m.text_ids||[])[i] || '未识别')}）</span></div>
+          <textarea data-slot="${i}" placeholder="第 ${i+1} 栏的文案，每行一条"
+            style="width:100%;min-height:64px;box-sizing:border-box">${esc((slotPools[i]||[]).join('\n'))}</textarea>
+        </div>`).join('')}` : '';
     return `<div class="qcard" data-q="${esc(q)}">
       <div class="qtop"><span class="qtag">${esc(q)}</span><span class="qtitle">${esc(m.title)}</span><span class="qkind">${kindName}</span></div>
       <div class="msg">开放题：每行写一条，每份随机取一条。留空则使用中性的通用短句（不会答非所问）。不参与选项分布和整体倾向值。</div>
       <textarea data-texts placeholder="建议增加午休时间&#10;希望食堂延长开放&#10;暂无" style="width:100%;min-height:88px;box-sizing:border-box">${esc(lines)}</textarea>
+      ${slotHtml}
       <div class="line" style="margin-top:6px">留白比例（非必填题才设，0~1）：
         <input type="number" data-blank min="0" max="1" step="0.1" value="${br}" style="width:72px">
       </div>
@@ -339,6 +353,11 @@ $('qlist').addEventListener('input', e => {
   } else if (e.target.dataset.texts !== undefined){
     cfg.mode = 'text';
     cfg.texts = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
+  } else if (e.target.dataset.slot !== undefined){
+    cfg.mode = 'text';
+    const i = Number(e.target.dataset.slot);
+    if (!Array.isArray(cfg.slot_texts)) cfg.slot_texts = [];
+    cfg.slot_texts[i] = e.target.value.split('\n').map(s => s.trim()).filter(Boolean);
   } else if (e.target.dataset.blank !== undefined){
     cfg.mode = 'text';
     cfg.blank_rate = Math.min(1, Math.max(0, Number(e.target.value) || 0));

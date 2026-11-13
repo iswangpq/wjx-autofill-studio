@@ -138,8 +138,11 @@ def parse_html(page_html):
             for _, oid in ranked:
                 if oid not in text_ids:
                     text_ids.append(oid)
+            # slot_count = 这道题有几个输入框。复合题（同一题块里多个填空）
+            # 会被识别成多框，填写时每个框都要填，不能只填第一个。
             meta[f"q{num}"] = {"title": title, "kind": "text", "opts": [], "ids": [],
-                               "text_ids": text_ids, "topic": num}
+                               "text_ids": text_ids, "slot_count": len(text_ids),
+                               "topic": num}
     return meta
 
 

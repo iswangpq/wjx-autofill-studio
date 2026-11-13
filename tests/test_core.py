@@ -463,3 +463,125 @@ class TestOpenTextReuse(unittest.TestCase):
         r = v.analyze(MULTI_TEXT_HTML, "建议X")
         self.assertEqual(set(r["payload"]["ans"]["__text"]), {"q2", "q5", "q8"})
         self.assertEqual(r["report"]["summary"]["errors"], 0, r["report"]["errors"])
+
+
+# 复合题：同一题块里多个输入框（姓名 + 建议 + 联系方式）
+COMPOSITE_HTML = """<html><body>
+<div class='field ui-field-contain' topic='1'><div class='topichtml'>1. 您的性别：</div>
+ <input type='radio' id='q1_1' name='q1'><div class='label' for='q1_1'>男</div>
+ <input type='radio' id='q1_2' name='q1'><div class='label' for='q1_2'>女</div></div>
+<div class='field ui-field-contain' topic='2'><div class='topichtml'>2. 请填写个人信息</div>
+ <input type='text' id='q2_1' name='q2_1'><span>姓名</span>
+ <input type='text' id='q2_2' name='q2_2'><span>建议</span>
+ <input type='text' id='q2_3' name='q2_3'><span>联系方式</span></div>
+<div class='field ui-field-contain' topic='3'><div class='topichtml'>3. 普通开放题</div>
+ <textarea id='q3_1' name='q3'></textarea></div>
+<input type="text" placeholder="请注明..." id="matrixinput" />
+<input type="text" id="clipVoteCode" readonly="readonly"/>
+</body></html>"""
+
+
+class TestCompositeText(unittest.TestCase):
+    """复合题：同一题多个输入框，每个框都要填上自己的文案。"""
+
+    def test_parse_detects_slot_count(self):
+        meta = studio.parse_html(COMPOSITE_HTML)
+        self.assertEqual(meta["q2"]["text_ids"], ["q2_1", "q2_2", "q2_3"])
+        self.assertEqual(meta["q2"]["slot_count"], 3)
+        self.assertEqual(meta["q3"]["slot_count"], 1, "单框题不该被当成复合题")
+
+    def test_sampler_returns_one_value_per_slot(self):
+        import verify_open_text as v
+        r = v.analyze(COMPOSITE_HTML, "建议X")
+        s = core.Sampler(profile_dict=r["profile"])
+        ans = s._build()
+        val = ans["__text"]["q2"]
+        self.assertIsInstance(val, list, "复合题必须是一框一值的列表")
+        self.assertEqual(len(val), 3)
+        self.assertEqual(val, ["建议X1", "建议X2", "建议X3"])
+        self.assertEqual(ans["__text"]["q3"], "建议X", "单框题仍是字符串，不改既有格式")
+
+    def test_slot_texts_pick_independent_pools(self):
+        meta = studio.parse_html(COMPOSITE_HTML)
+        p = profile(meta=meta, rules={
+            "q1": {"mode": "ratio", "ratio": [0.5, 0.5]},
+            "q2": {"mode": "text", "texts": ["通用"],
+                   "slot_texts": [["张三", "李四"], ["建议很好"], ["13800000000"]]},
+            "q3": {"mode": "text", "texts": ["普通建议"]},
+        })
+        s = core.Sampler(profile_dict=p)
+        val = s._build()["__text"]["q2"]
+        self.assertEqual(len(val), 3)
+        self.assertIn(val[0], ["张三", "李四"])
+        self.assertEqual(val[1], "建议很好")
+        self.assertEqual(val[2], "13800000000")
+
+    def test_slot_missing_pool_falls_back_to_shared(self):
+        """只配了第 1 栏，第 2/3 栏应退回共用文案池，不能空着。"""
+        meta = studio.parse_html(COMPOSITE_HTML)
+        p = profile(meta=meta, rules={
+            "q1": {"mode": "ratio", "ratio": [0.5, 0.5]},
+            "q2": {"mode": "text", "texts": ["通用文案"],
+                   "slot_texts": [["专属文案"], []]},
+            "q3": {"mode": "text", "texts": ["普通建议"]},
+        })
+        s = core.Sampler(profile_dict=p)
+        val = s._build()["__text"]["q2"]
+        self.assertEqual(val[0], "专属文案")
+        self.assertEqual(val[1], "通用文案")
+        self.assertEqual(val[2], "通用文案")
+
+    def test_blank_rate_blanks_all_slots(self):
+        meta = studio.parse_html(COMPOSITE_HTML)
+        p = profile(meta=meta, rules={
+            "q1": {"mode": "ratio", "ratio": [0.5, 0.5]},
+            "q2": {"mode": "text", "texts": ["x"], "blank_rate": 1.0},
+            "q3": {"mode": "text", "texts": ["普通建议"]},
+        })
+        s = core.Sampler(profile_dict=p)
+        self.assertEqual(s._build()["__text"]["q2"], ["", "", ""])
+
+    def test_single_slot_keeps_string_for_backward_compat(self):
+        s = core.Sampler(profile_dict=profile())
+        s.meta = {"q9": {"title": "建议", "kind": "text", "opts": [], "ids": [],
+                         "text_ids": ["q9"], "slot_count": 1}}
+        s.profile["questions"]["q9"] = {"mode": "text", "texts": ["只有一句"]}
+        self.assertEqual(s._build()["__text"]["q9"], "只有一句")
+
+    def test_validate_warns_when_composite_has_no_slot_texts(self):
+        meta = studio.parse_html(COMPOSITE_HTML)
+        p = profile(meta=meta, rules={
+            "q1": {"mode": "ratio", "ratio": [0.5, 0.5]},
+            "q2": {"mode": "text", "texts": ["通用"]},
+            "q3": {"mode": "text", "texts": ["普通建议"]},
+        })
+        r = validate(p)
+        codes = [w["code"] for w in r["warnings"]]
+        self.assertIn("composite_text_no_slots", codes)
+
+    def test_validate_rejects_bad_slot_texts(self):
+        meta = studio.parse_html(COMPOSITE_HTML)
+        p = profile(meta=meta, rules={
+            "q1": {"mode": "ratio", "ratio": [0.5, 0.5]},
+            "q2": {"mode": "text", "texts": ["通用"], "slot_texts": [["ok"], "不是数组"]},
+            "q3": {"mode": "text", "texts": ["普通建议"]},
+        })
+        r = validate(p)
+        codes = [e["code"] for e in r["errors"]]
+        self.assertIn("slot_texts_item_bad", codes)
+
+    def test_apply_js_fills_every_box_of_composite_question(self):
+        """复合题必须一框一值（端到端浏览器验证见 test_browser_open_text.py）。"""
+        import verify_open_text as v
+        r = v.analyze(COMPOSITE_HTML, "建议X")
+        payload = r["payload"]
+        vals = payload["ans"]["__text"]["q2"]
+        self.assertEqual(vals, ["建议X1", "建议X2", "建议X3"])
+        self.assertEqual(payload["textIds"]["q2"], ["q2_1", "q2_2", "q2_3"])
+
+    def test_readback_shares_locator_with_apply(self):
+        """回读与填写必须用同一套定位函数，否则会出现「填了但读不到」。"""
+        self.assertIn("findTextEls", core.APPLY_JS)
+        self.assertIn("findTextEls", core.READBACK_JS)
+        self.assertIn(core.TEXT_FIND_JS, core.APPLY_JS)
+        self.assertIn(core.TEXT_FIND_JS, core.READBACK_JS)

@@ -206,8 +206,8 @@ class Sampler:
             self.counts[q][v - 1] += 1
         return sorted(picked)
 
-    def _pick_text(self, cfg):
-        # 优先级：自定义文本池 > 可选「跟随重心」> 中性通用池
+    def _text_pool(self, cfg):
+        """文本池优先级：自定义文本池 > 可选「跟随重心」> 中性通用池。"""
         pool = cfg.get("texts")
         if not pool:
             b = float(self.profile.get("bias", 0.0))
@@ -220,6 +220,13 @@ class Sampler:
                     pool = ["一般", "还行", "无", "测试"]
             else:
                 pool = list(GENERIC_TEXTS)
+        if isinstance(pool, str):
+            pool = [pool]
+        pool = [x for x in pool if isinstance(x, str) and x.strip()]
+        return pool or list(GENERIC_TEXTS)
+
+    def _pick_text(self, cfg):
+        pool = self._text_pool(cfg)
         try:
             br = float(cfg.get("blank_rate", 0.0))
         except (TypeError, ValueError):
@@ -227,6 +234,34 @@ class Sampler:
         if br > 0 and random.random() < br:
             return ""      # 允许有意识地留白（非必填开放题）
         return random.choice(pool)
+
+    def _pick_text_slots(self, cfg, n_slots):
+        """一题多个输入框（复合题）时逐框取值，返回长度 = n_slots 的列表。
+
+        单输入框的题等价于 _pick_text（返回 1 元素列表）。
+        每个框可单独配文案池 cfg["slot_texts"][i]；没单独配的框回退到共用池 cfg["texts"]。
+        留白是「整题留白」：要么所有框都空，要么都填，语义与单框一致。
+        """
+        n_slots = max(1, int(n_slots or 1))
+        try:
+            br = float(cfg.get("blank_rate", 0.0))
+        except (TypeError, ValueError):
+            br = 0.0
+        if br > 0 and random.random() < br:
+            return [""] * n_slots
+        slot_pools = cfg.get("slot_texts")
+        shared = self._text_pool(cfg)
+        out = []
+        for i in range(n_slots):
+            pool = None
+            if isinstance(slot_pools, list) and i < len(slot_pools):
+                cand = slot_pools[i]
+                if isinstance(cand, list):
+                    cand = [x for x in cand if isinstance(x, str) and x.strip()]
+                    if cand:
+                        pool = cand
+            out.append(random.choice(pool or shared))
+        return out
 
     def _build(self):
         if self._fixed is None:
@@ -236,7 +271,10 @@ class Sampler:
             cfg = self.profile.get("questions", {}).get(q, {})
             n = len(m.get("opts") or [])
             if m.get("kind") == "text" or n == 0:
-                texts[q] = self._pick_text(cfg)
+                # 单框题仍是字符串（配置与 CSV 格式不变）；复合题才用列表，一框一值
+                slots = int(m.get("slot_count") or len(m.get("text_ids") or []) or 1)
+                vals = self._pick_text_slots(cfg, slots)
+                texts[q] = vals[0] if len(vals) == 1 else vals
             elif m["kind"] == "checkbox" or cfg.get("mode") == "multi":
                 ans[q] = self._pick_multi(q, n, cfg)
             else:
@@ -275,7 +313,6 @@ def resolve_concurrency(value, allow_over=False):
 def fmt_answers(a):
     return " ".join(f"{q}={','.join(map(str, v)) if isinstance(v, list) else v}"
                     for q, v in a.items() if q != "__text")
-
 
 def severity_index(samples, meta, profile):
     """0=最轻/最健康，1=最重/最严重，用来一眼看出整体重心。"""
@@ -323,7 +360,42 @@ def preview(total, sampler):
     print("  不满意就改 bias / sharpness / ratio 再预览，确认后再去掉 --preview 真跑\n")
 
 
-APPLY_JS = r"""
+# 开放题输入框的定位逻辑：APPLY（填）与 READBACK（回读）必须用同一套规则，
+# 否则会出现「填进去了但回读不到」或「回读到别的框」的错位。
+# 优先级：抓取到的真实 id → 题号容器内的所有可编辑框 → 常见 id 命名。
+# 返回数组：复合题（一题多个输入框）会一次返回多个元素，按页面顺序。
+TEXT_FIND_JS = r"""
+  const findTextEls = (q, tids) => {
+    const num = (q.match(/\d+/) || [''])[0];
+    let els = [];
+    // 1) 真实 id 精确定位（保留页面顺序，去重）
+    for (const id of (tids[q] || [])) {
+      const e = document.getElementById(id);
+      if (e && !e.readOnly && !e.disabled && els.indexOf(e) === -1) els.push(e);
+    }
+    // 2) 退回题号容器：该题块内所有可编辑的填空框
+    if (!els.length) {
+      const box = document.querySelector("div.field[topic='" + num + "']");
+      if (box) {
+        els = [...box.querySelectorAll('textarea, input[type=text]')]
+               .filter(e => !e.readOnly && !e.disabled);
+      }
+    }
+    // 3) 再退回常见 id 命名
+    if (!els.length) {
+      for (const id of [q + '_1', 'q' + num + '_1', 'txt' + num]) {
+        const e = document.getElementById(id);
+        if (e && (e.tagName === 'TEXTAREA' || e.type === 'text') && !e.readOnly && !e.disabled) {
+          els.push(e); break;
+        }
+      }
+    }
+    return els;
+  };
+"""
+
+APPLY_JS = (
+    r"""
 (payload) => {
   const ans = payload.ans || {};
   const idsMap = payload.ids || {};   // 复杂问卷(矩阵/量表)用抓取到的真实 input id 精确定位
@@ -348,34 +420,27 @@ APPLY_JS = r"""
     const ids = Array.isArray(v) ? v.map(optId) : [optId(v)];
     out[q] = ids.filter(clickOpt).length + '/' + ids.length;
   }
+"""
+    + TEXT_FIND_JS
+    + r"""
   // 开放题 / 填空题：优先用抓取到的真实 id 精确定位，找不到再退回题号容器
+  // 一题多个输入框（复合题）时按顺序把每个框都填上，不再只填第一个
   const handled = new Set();
   if (ans.__text) {
     const tids = payload.textIds || {};
     for (const [q, val] of Object.entries(ans.__text)) {
-      const num = (q.match(/\d+/) || [''])[0];
-      let el = null;
-      for (const id of (tids[q] || [])) {
-        const e = document.getElementById(id);
-        if (e && !e.readOnly && !e.disabled) { el = e; break; }
-      }
-      if (!el) {
-        const box = document.querySelector("div.field[topic='" + num + "']");
-        if (box) el = box.querySelector('textarea, input[type=text]');
-      }
-      if (!el) {
-        for (const id of [q + '_1', 'q' + num + '_1', 'txt' + num]) {
-          const e = document.getElementById(id);
-          if (e && (e.tagName === 'TEXTAREA' || e.type === 'text')) { el = e; break; }
-        }
-      }
-      if (!el) { out[q] = '0/1'; continue; }   // 填不中要报出来，不能静默
-      handled.add(el);
-      if (val === '') { out[q] = 'blank'; continue; }
-      el.value = val;
-      el.dispatchEvent(new Event('input', {bubbles: true}));
-      el.dispatchEvent(new Event('change', {bubbles: true}));
-      out[q] = 'text';
+      const vals = Array.isArray(val) ? val : [val];
+      const els = findTextEls(q, tids);
+      if (!els.length) { out[q] = '0/' + vals.length; continue; }   // 填不中要报出来，不能静默
+      els.forEach((el, i) => {
+        handled.add(el);                                  // 先标记：留白的框也不能被兜底覆盖
+        const v = vals[i] !== undefined ? vals[i] : vals[vals.length - 1];
+        if (v === '') return;                             // 有意留白
+        el.value = v;
+        el.dispatchEvent(new Event('input', {bubbles: true}));
+        el.dispatchEvent(new Event('change', {bubbles: true}));
+      });
+      out[q] = vals.every(v => v === '') ? 'blank' : 'text';
     }
   }
   // 兜底：页面上其它可见填空（已精确填过的元素不要被覆盖，尤其别破坏留白）
@@ -394,6 +459,7 @@ APPLY_JS = r"""
   return out;
 }
 """
+)
 
 # 问卷「智能验证 / 安全验证」相关：这类弹窗不能当成普通提示直接点掉
 VERIFY_WORDS = ("安全验证", "智能验证", "请完成验证", "滑动验证", "拖动滑块", "点选验证")
@@ -556,25 +622,23 @@ VERIFY_START_JS = r"""
 
 # 提交前回读开放题输入框的真实 value，写进 CSV 备注，便于和问卷后台逐份核对。
 # 定位顺序与 APPLY_JS 保持一致，否则「靠题号兜底填中」的题会读不到。
-READBACK_JS = r"""
+READBACK_JS = (
+    r"""
 (tids) => {
   const out = {};
+"""
+    + TEXT_FIND_JS
+    + r"""
   for (const [q, ids] of Object.entries(tids || {})) {
-    let el = null;
-    for (const id of ids) {
-      const e = document.getElementById(id);
-      if (e && !e.readOnly && !e.disabled) { el = e; break; }
-    }
-    if (!el) {
-      const num = (q.match(/\d+/) || [''])[0];
-      const box = document.querySelector("div.field[topic='" + num + "']");
-      if (box) el = box.querySelector('textarea, input[type=text]');
-    }
-    out[q] = el ? el.value : null;
+    const els = findTextEls(q, tids);
+    if (!els.length) { out[q] = null; continue; }
+    // 复合题可能有多个框：全部回读，逗号分隔
+    out[q] = els.map(e => e.value).join(' | ');
   }
   return out;
 }
 """
+)
 
 DISMISS_JS = r"""
 () => {
@@ -862,6 +926,7 @@ async def submit_one(idx, browser, limiter, sampler, results):
             if missing:
                 notes.append(f"页面未找到这些题的选项，问卷可能改版: {','.join(missing)}")
             # 开放题：回读真实 value 记进结果，方便与问卷后台逐份核对
+            # 复合题会回读多个框，用「 | 」分隔，一眼能看出每格填了什么
             if answers.get("__text"):
                 try:
                     rb = await page.evaluate(
