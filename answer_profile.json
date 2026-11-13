@@ -155,7 +155,7 @@
     "q4": {
       "mode": "trend",
       "dir": -1,
-      "strength": 1.0
+      "strength": 1
     },
     "q5": {
       "mode": "trend",
@@ -177,7 +177,7 @@
     "q7": {
       "mode": "trend",
       "dir": 1,
-      "strength": 1.0
+      "strength": 1
     }
   }
 }
