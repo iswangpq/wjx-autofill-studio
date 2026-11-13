@@ -27,6 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 from throttle import AdaptiveLimiter
+from validate_profile import MAX_CONCURRENCY, CONCURRENCY_NOTE
 
 # playwright 延迟到真正开浏览器时才导入，这样 --preview 不装依赖也能跑
 
@@ -248,6 +249,27 @@ class Sampler:
     async def next_answers(self):
         async with self.lock:
             return self._build()
+
+
+def resolve_concurrency(value, allow_over=False):
+    """把并发收敛到实测上限（界面、配置、命令行统一走这里）。
+
+    allow_over 只给压测/实验复现用，会明确打印警告，不能悄悄超限。
+    """
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        n = 3
+    n = max(1, n)
+    if n > MAX_CONCURRENCY:
+        if allow_over:
+            print(f"[警告] 并发 {n} 超过实测上限 {MAX_CONCURRENCY}（--allow-over-limit 已显式放行），"
+                  f"安全验证会显著增多", flush=True)
+        else:
+            print(f"[并发收敛] {n} → {MAX_CONCURRENCY}（实测上限；实验需要更高请加 --allow-over-limit）",
+                  flush=True)
+            n = MAX_CONCURRENCY
+    return n
 
 
 def fmt_answers(a):
@@ -940,6 +962,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-adaptive", action="store_true",
                     help="关闭自适应节流，回到固定并发 + 固定间隔（便于 A/B 对比）")
+    ap.add_argument("--allow-over-limit", action="store_true",
+                    help=f"允许并发超过实测上限 {MAX_CONCURRENCY}（仅压测/实验用，会打印警告）")
     ap.add_argument("--preview", action="store_true", help="只离线看分布，不开浏览器")
     ap.add_argument("--profile", help="配置文件，默认 answer_profile.json")
     args = ap.parse_args()
@@ -961,10 +985,8 @@ def main():
         CFG["TOTAL"] = args.total
     elif p.get("total"):
         CFG["TOTAL"] = int(p["total"])
-    if args.concurrency:
-        CFG["CONCURRENCY"] = args.concurrency
-    elif p.get("concurrency"):
-        CFG["CONCURRENCY"] = int(p["concurrency"])
+    raw_conc = args.concurrency if args.concurrency is not None else p.get("concurrency", 3)
+    CFG["CONCURRENCY"] = resolve_concurrency(raw_conc, args.allow_over_limit)
     if args.headless or p.get("headless"):
         CFG["HEADLESS"] = True
     if args.dry_run:

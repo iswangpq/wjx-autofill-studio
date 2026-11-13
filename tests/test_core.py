@@ -343,3 +343,33 @@ class TestNewFeatures(unittest.TestCase):
         meta = {"q8": {"title": "建议", "kind": "text", "opts": [], "ids": []}}
         r = validate(profile(meta=meta, rules={"q8": {"mode": "text", "texts": ["x"]}}))
         self.assertIn("meta_text_no_id", [w["code"] for w in r["warnings"]])
+
+
+class TestConcurrencyCap(unittest.TestCase):
+    """命令行/配置并发必须和界面上限一致。"""
+
+    def cap(self, value, allow=False):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return core.resolve_concurrency(value, allow)
+
+    def test_within_limit_unchanged(self):
+        for n in (1, 2, 3, 4):
+            self.assertEqual(self.cap(n), n)
+
+    def test_above_limit_clamps(self):
+        self.assertEqual(self.cap(8), vp.MAX_CONCURRENCY)
+        self.assertEqual(self.cap(99), vp.MAX_CONCURRENCY)
+
+    def test_allow_over_keeps_value(self):
+        self.assertEqual(self.cap(8, allow=True), 8)
+
+    def test_below_one_and_invalid(self):
+        self.assertEqual(self.cap(0), 1)
+        self.assertEqual(self.cap(-5), 1)
+        self.assertEqual(self.cap("abc"), 3)
+
+    def test_clamp_prints_warning(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            core.resolve_concurrency(8)
+        self.assertIn("并发收敛", buf.getvalue())
