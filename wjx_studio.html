@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>问卷填写工作台</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#fff; --line:#e5e9f2; --text:#1c2434; --muted:#6c7793;
+    --primary:#2f6bff; --soft:#eef3ff; --good:#16a06b; --bad:#e8663d; --shadow:0 2px 12px rgba(28,36,52,.06);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1060px;margin:0 auto;padding:22px 18px 120px}
+  header{display:flex;align-items:baseline;gap:14px;margin-bottom:18px;flex-wrap:wrap}
+  h1{font-size:22px;margin:0;letter-spacing:.3px}
+  header .sub{color:var(--muted);font-size:13px}
+  .pill{margin-left:auto;background:#fff;border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-size:12px;color:var(--muted)}
+  .pill.on{background:#e9f8f1;color:var(--good);border-color:#bfe8d5}
+  .pill.warn{background:#fff3e8;color:#c25a1a;border-color:#f5cdae}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:18px 20px;margin-bottom:16px}
+  .step{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .num{width:24px;height:24px;border-radius:8px;background:var(--soft);color:var(--primary);font-weight:700;display:grid;place-items:center;font-size:13px;flex:none}
+  .step h2{font-size:15px;margin:0;font-weight:650}
+  .step .tip{color:var(--muted);font-size:12px;margin-left:4px}
+  label.f{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  input[type=text],input[type=number],textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font:inherit;color:var(--text);background:#fff;outline:none}
+  input[type=text]:focus,input[type=number]:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--soft)}
+  textarea{height:110px;resize:vertical;font:12px/1.5 Consolas,monospace}
+  .row{display:flex;gap:10px;align-items:center}
+  .row input[type=text]{flex:1}
+  button{font:inherit;border:1px solid var(--line);background:#fff;color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;transition:.15s;white-space:nowrap}
+  button:hover{border-color:var(--primary);color:var(--primary)}
+  button.primary{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600}
+  button.primary:hover{background:#245ae0;color:#fff}
+  button.danger:hover{border-color:var(--bad);color:var(--bad)}
+  button.mini{padding:5px 10px;font-size:12px;border-radius:7px}
+  button.active{background:var(--soft);border-color:var(--primary);color:var(--primary);font-weight:600}
+  details{margin-top:12px}
+  summary{font-size:12px;color:var(--muted);cursor:pointer}
+  .msg{font-size:12px;margin-top:9px;color:var(--muted)}
+  .msg.ok{color:var(--good)}
+  .msg.err{color:var(--bad)}
+  .biasbox{background:linear-gradient(180deg,#fbfcff,#f7f9ff);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .biashead{display:flex;align-items:baseline;gap:12px;margin-bottom:10px}
+  .biashead b{font-size:15px}
+  .biashead .val{font-size:20px;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums}
+  .biashead .desc{color:var(--muted);font-size:12px}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:8px;border-radius:8px;background:linear-gradient(90deg,#16a06b,#d8dfeb 50%,#e8663d);outline:none;margin:8px 0}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:#fff;border:3px solid var(--primary);box-shadow:0 1px 5px rgba(0,0,0,.2);cursor:grab}
+  input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:#fff;border:3px solid var(--primary);cursor:grab}
+  .ends{display:flex;justify-content:space-between;color:var(--muted);font-size:11px}
+  .grid3{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:16px}
+  .grid3 .fld label.f{margin-bottom:4px}
+  .grid3 input[type=range]{background:var(--line);height:6px}
+  .gauge{display:flex;align-items:center;gap:12px;margin-top:16px;padding-top:14px;border-top:1px dashed var(--line)}
+  .gauge .lab{font-size:12px;color:var(--muted);white-space:nowrap}
+  .gauge .track{flex:1;height:9px;border-radius:9px;background:linear-gradient(90deg,#16a06b,#d8dfeb 50%,#e8663d);position:relative}
+  .gauge .pin{position:absolute;top:-5px;width:4px;height:19px;border-radius:3px;background:#1c2434;transform:translateX(-2px);transition:left .25s}
+  .gauge .num{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;min-width:52px;text-align:right}
+  .qcard{border:1px solid var(--line);border-radius:11px;padding:13px 15px;margin-bottom:11px;background:#fcfdff}
+  .qtop{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .qtag{font:600 11px Consolas,monospace;background:var(--soft);color:var(--primary);padding:2px 7px;border-radius:5px}
+  .qtitle{font-weight:600;font-size:13px}
+  .qkind{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 7px}
+  .dirrow{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 12px}
+  .dirrow .sep{flex:1}
+  .opts{display:grid;gap:5px}
+  .opt{display:grid;grid-template-columns:150px 1fr 46px;gap:10px;align-items:center;font-size:12px}
+  .ol{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .track{height:8px;background:#edf0f7;border-radius:8px;overflow:hidden}
+  .fill{height:100%;width:0;background:var(--primary);border-radius:8px;transition:width .25s}
+  .pc{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  .adv{margin-top:12px;padding-top:11px;border-top:1px dashed var(--line);font-size:12px;color:var(--muted)}
+  .adv .line{display:flex;align-items:center;gap:10px;margin-bottom:9px}
+  .adv input[type=range]{max-width:220px;background:var(--line);height:6px}
+  .ratioGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .ratioGrid .ri{display:flex;align-items:center;gap:6px}
+  .ratioGrid .ri span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ratioGrid input{width:66px;padding:4px 6px;text-align:right}
+  .empty{color:var(--muted);font-size:13px;padding:22px;text-align:center;border:1px dashed var(--line);border-radius:10px}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border-top:1px solid var(--line);padding:12px 18px;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap;z-index:9}
+  .bar .hint{font-size:12px;color:var(--muted);margin-left:8px}
+  .logbox{font:12px/1.6 Consolas,"Microsoft YaHei",monospace;background:#fbfcfe;border:1px solid var(--line);border-radius:9px;padding:12px;max-height:230px;overflow:auto;white-space:pre-wrap;color:#46506a}
+  @media(max-width:720px){.grid3{grid-template-columns:repeat(2,1fr)}.opt{grid-template-columns:100px 1fr 42px}.wrap{padding:14px 12px 130px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>问卷填写工作台</h1>
+    <span class="sub">粘链接 → 自动出题 → 拖滑块调重心 → 开始填写。运行中改滑块，下一份立即生效。</span>
+    <span class="pill" id="envState">检查环境…</span>
+    <span class="pill" id="runState">空闲</span>
+  </header>
+
+  <section class="card">
+    <div class="step"><span class="num">1</span><h2>问卷链接</h2><span class="tip">自动识别题目和选项，不用手填</span></div>
+    <div class="row">
+      <input type="text" id="url" placeholder="https://v.wjx.cn/vm/xxxxx.aspx">
+      <button class="primary" id="btnFetch">抓取题目</button>
+    </div>
+    <div class="msg" id="fetchMsg">当前已载入 <b id="qCount">0</b> 道题。</div>
+    <details>
+      <summary>抓不到？粘贴问卷页面源码</summary>
+      <textarea id="rawHtml" placeholder="浏览器打开问卷 → 右键「查看网页源代码」→ 全选复制粘贴到这里"></textarea>
+      <div style="margin-top:8px"><button class="mini" id="btnParseHtml">用源码识别</button></div>
+    </details>
+  </section>
+
+  <section class="card">
+    <div class="step"><span class="num">2</span><h2>答案重心</h2><span class="tip">一个滑块控制整体倾向</span></div>
+    <div class="biasbox">
+      <div class="biashead">
+        <b>整体重心</b>
+        <span class="val" id="biasVal">0.00</span>
+        <span class="desc" id="biasDesc">各选项均匀</span>
+      </div>
+      <input type="range" id="bias" min="-1" max="1" step="0.05" value="0">
+      <div class="ends"><span>← 偏轻 / 偏好 / 健康</span><span>0 均匀</span><span>偏重 / 偏差 / 严重 →</span></div>
+    </div>
+    <div class="grid3">
+      <div class="fld"><label class="f">倾斜强度 <span id="sharpVal">2.0</span></label><input type="range" id="sharp" min="0" max="5" step="0.1" value="2"></div>
+      <div class="fld"><label class="f">填写份数</label><input type="number" id="total" min="1" max="500" value="20"></div>
+      <div class="fld"><label class="f">同时运行几个</label><input type="number" id="conc" min="1" max="10" value="3"></div>
+      <div class="fld"><label class="f">无界面运行</label><div style="padding-top:6px"><label style="font-size:12px;color:var(--muted)"><input type="checkbox" id="headless" style="width:auto"> 后台跑（不弹浏览器）</label></div></div>
+    </div>
+    <div class="gauge">
+      <span class="lab">模拟 300 份后的整体倾向</span>
+      <div class="track"><div class="pin" id="sevPin" style="left:50%"></div></div>
+      <span class="num" id="sevNum">0.50</span>
+      <span class="lab">0 轻 → 1 重</span>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="step"><span class="num">3</span><h2>每道题怎么跟随</h2><span class="tip">默认已配好，条形图是模拟出来的实际占比</span></div>
+    <div id="qlist"></div>
+  </section>
+
+  <section class="card">
+    <div class="step"><span class="num">4</span><h2>运行日志</h2><span class="tip">每份答案会写进 wjx_result.csv</span></div>
+    <div class="msg">安全验证（含「需要安全校验，请重新提交！」和阿里云智能验证）脚本会自动点掉并重新提交，窗口也会自动关闭，不用手动管。若某份实在过不了，日志里会写明并自动跳过，继续跑下一份。</div>
+    <div class="logbox" id="log" style="margin-top:10px">还没开始。</div>
+  </section>
+</div>
+
+<div class="bar">
+  <button id="btnSave">保存配置</button>
+  <button class="primary" id="btnRun">开始批量填写</button>
+  <button class="danger" id="btnStop">停止</button>
+  <span class="hint" id="barHint">改动会自动保存；运行中改重心，下一份立即生效</span>
+</div>
+
+<script>
+let state = null, pvTimer = null, svTimer = null;
+const $ = id => document.getElementById(id);
+
+async function api(path, body){
+  const opt = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  return r.json();
+}
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function biasText(v){
+  if (v <= -0.65) return '明显偏轻 / 偏好';
+  if (v <= -0.15) return '略偏轻';
+  if (v < 0.15) return '各选项均匀';
+  if (v < 0.65) return '略偏重';
+  return '明显偏重 / 偏差';
+}
+
+function renderTop(){
+  $('bias').value = state.bias;
+  $('biasVal').textContent = Number(state.bias).toFixed(2);
+  $('biasDesc').textContent = biasText(Number(state.bias));
+  $('sharp').value = state.sharpness;
+  $('sharpVal').textContent = Number(state.sharpness).toFixed(1);
+  $('total').value = state.total ?? 20;
+  $('conc').value = state.concurrency ?? 3;
+  $('headless').checked = !!state.headless;
+  $('url').value = state.url || '';
+}
+
+function ratioPercents(cfg, n){
+  const r = cfg.ratio || Array(n).fill(1/n);
+  const vals = Array.from({length:n}, (_,i) => Number(r[i] ?? 0));
+  const s = vals.reduce((a,b)=>a+b,0) || 1;
+  return vals.map(v => Math.round(v/s*100));
+}
+
+function cardHtml(q, m){
+  const cfg = state.questions[q] || {};
+  const mode = cfg.mode || 'trend';
+  const opts = m.opts || [];
+  const n = opts.length;
+  const kindName = {radio:'单选', checkbox:'多选', text:'填空'}[m.kind] || '其它';
+
+  if (m.kind === 'text' || n === 0){
+    return `<div class="qcard" data-q="${esc(q)}">
+      <div class="qtop"><span class="qtag">${esc(q)}</span><span class="qtitle">${esc(m.title)}</span><span class="qkind">${kindName}</span></div>
+      <div class="msg">按重心自动生成文字，不参与选项分布。</div></div>`;
+  }
+
+  const dirBtns = m.kind === 'checkbox' ? '' :
+    `<button class="mini dir ${mode==='trend' && (cfg.dir??1)===1 ? 'active':''}" data-act="dir" data-v="1">越靠后越重 ↗</button>
+     <button class="mini dir ${mode==='trend' && cfg.dir===-1 ? 'active':''}" data-act="dir" data-v="-1">越靠前越重 ↘</button>
+     <button class="mini dir ${mode==='off'||mode==='uniform' ? 'active':''}" data-act="dir" data-v="0">不跟随 —</button>
+     <button class="mini dir ${mode==='ratio' ? 'active':''}" data-act="ratio">固定比例 %</button>`;
+
+  const percs = ratioPercents(cfg, n);
+  const probs = (cfg.prob || Array(n).fill(0.5)).map(v => Math.round(Number(v)*100));
+  const ratioInputs = opts.map((o,i)=>`<div class="ri"><span title="${esc(o)}">${esc(o)}</span><input type="number" min="0" max="100" value="${percs[i]}" data-ratio="${i}"> %</div>`).join('');
+  const probInputs = opts.map((o,i)=>`<div class="ri"><span title="${esc(o)}">${esc(o)}</span><input type="number" min="0" max="100" value="${probs[i]}" data-prob="${i}"> %</div>`).join('');
+
+  return `<div class="qcard" data-q="${esc(q)}">
+    <div class="qtop"><span class="qtag">${esc(q)}</span><span class="qtitle">${esc(m.title)}</span><span class="qkind">${kindName}</span></div>
+    <div class="dirrow">${dirBtns}<span class="sep"></span><button class="mini" data-act="more">高级 ▾</button></div>
+    <div class="opts">${opts.map((o,i)=>`
+      <div class="opt"><span class="ol" title="${esc(o)}">${esc(o)}</span>
+        <div class="track"><div class="fill" data-bar="${esc(q)}:${i}"></div></div>
+        <span class="pc" data-pct="${esc(q)}:${i}">–</span></div>`).join('')}</div>
+    <div class="adv" hidden>
+      ${m.kind === 'checkbox'
+        ? `<div class="line">每个选项被选中的概率（每份至少 ${cfg.min??1} 项，最多 ${cfg.max??3} 项）</div><div class="ratioGrid">${probInputs}</div>`
+        : `<div class="line">跟随强度 <input type="range" data-strength min="0" max="1" step="0.1" value="${cfg.strength??1}"> <span>${cfg.strength??1}</span></div>
+           <div class="line">固定比例（改成数字即切换到「固定比例」模式，加起来不一定要 100，会自动归一化）</div>
+           <div class="ratioGrid">${ratioInputs}</div>`}
+    </div>
+  </div>`;
+}
+
+function renderQuestions(){
+  const meta = state.questions_meta || {};
+  const keys = Object.keys(meta);
+  $('qCount').textContent = keys.length;
+  $('qlist').innerHTML = keys.length
+    ? keys.map(q => cardHtml(q, meta[q])).join('')
+    : '<div class="empty">还没识别到题目 → 在第 1 步粘问卷链接，点「抓取题目」</div>';
+}
+
+async function preview(){
+  const r = await api('/api/preview', {profile: state, total: 300});
+  if (r.error || !r.dist) return;
+  for (const q of Object.keys(state.questions_meta || {})){
+    const d = r.dist[q]; if (!d) continue;
+    d.pct.forEach((p,i)=>{
+      const bar = document.querySelector(`[data-bar="${q}:${i}"]`);
+      const pc = document.querySelector(`[data-pct="${q}:${i}"]`);
+      if (bar) bar.style.width = p + '%';
+      if (pc) pc.textContent = p.toFixed(0) + '%';
+    });
+  }
+  $('sevNum').textContent = r.severity.toFixed(2);
+  $('sevPin').style.left = (r.severity*100).toFixed(1) + '%';
+}
+function schedulePreview(){ clearTimeout(pvTimer); pvTimer = setTimeout(preview, 180); }
+async function save(){ await api('/api/save', {profile: state}); }
+function scheduleSave(){
+  clearTimeout(svTimer);
+  svTimer = setTimeout(async ()=>{
+    await save();
+    if ($('runState').classList.contains('on')) $('barHint').textContent = '✓ 已保存，新重心下一份立即生效';
+  }, 450);
+}
+function changed(){ renderTop(); renderQuestions(); schedulePreview(); scheduleSave(); }
+
+// 顶部参数
+$('bias').addEventListener('input', e => { state.bias = Number(e.target.value); $('biasVal').textContent = state.bias.toFixed(2); $('biasDesc').textContent = biasText(state.bias); schedulePreview(); scheduleSave(); });
+$('sharp').addEventListener('input', e => { state.sharpness = Number(e.target.value); $('sharpVal').textContent = state.sharpness.toFixed(1); schedulePreview(); scheduleSave(); });
+$('total').addEventListener('change', e => { state.total = Math.max(1, Number(e.target.value)||20); scheduleSave(); });
+$('conc').addEventListener('change', e => { state.concurrency = Math.max(1, Number(e.target.value)||3); scheduleSave(); });
+$('headless').addEventListener('change', e => { state.headless = e.target.checked; scheduleSave(); });
+
+// 题目卡片事件委托
+$('qlist').addEventListener('click', e => {
+  const btn = e.target.closest('button'); if (!btn) return;
+  const card = btn.closest('.qcard'); if (!card) return;
+  const q = card.dataset.q, act = btn.dataset.act;
+  state.questions[q] = state.questions[q] || {};
+  const cfg = state.questions[q];
+  if (act === 'dir'){
+    const v = Number(btn.dataset.v);
+    Object.assign(cfg, v === 0 ? {mode:'off'} : {mode:'trend', dir:v, strength: cfg.strength ?? 1});
+    delete cfg.ratio;
+  } else if (act === 'ratio'){
+    const n = (state.questions_meta[q].opts || []).length;
+    Object.assign(cfg, {mode:'ratio', ratio: Array(n).fill(1/n)});
+    card.querySelector('.adv').hidden = false;
+  } else if (act === 'more'){
+    card.querySelector('.adv').hidden = !card.querySelector('.adv').hidden;
+    return;
+  } else return;
+  renderQuestions(); schedulePreview(); scheduleSave();
+});
+
+$('qlist').addEventListener('input', e => {
+  const card = e.target.closest('.qcard'); if (!card) return;
+  const q = card.dataset.q; state.questions[q] = state.questions[q] || {};
+  const cfg = state.questions[q];
+  if (e.target.dataset.strength !== undefined){
+    cfg.strength = Number(e.target.value);
+    const sp = e.target.nextElementSibling; if (sp) sp.textContent = cfg.strength;
+  } else if (e.target.dataset.ratio !== undefined){
+    const n = state.questions_meta[q].opts.length;
+    const vals = Array.from({length:n}, (_,i) => Number(card.querySelector(`[data-ratio="${i}"]`).value) || 0);
+    const s = vals.reduce((a,b)=>a+b,0) || 1;
+    cfg.mode = 'ratio'; cfg.ratio = vals.map(v => +(v/s).toFixed(4));
+  } else if (e.target.dataset.prob !== undefined){
+    const n = state.questions_meta[q].opts.length;
+    cfg.mode = 'multi';
+    cfg.prob = Array.from({length:n}, (_,i) => +(Number(card.querySelector(`[data-prob="${i}"]`).value)/100).toFixed(2));
+  } else return;
+  schedulePreview(); scheduleSave();
+});
+
+// 抓取题目
+async function doParse(body){
+  $('fetchMsg').className = 'msg'; $('fetchMsg').textContent = '正在识别…';
+  const r = await api('/api/parse', body);
+  if (r.error){ $('fetchMsg').className = 'msg err'; $('fetchMsg').textContent = r.error; return; }
+  state.url = body.url || state.url;
+  state.questions_meta = r.meta;
+  // 已配过的题保留原设置（别把调好的方向冲掉），只补新出现的题
+  const old = state.questions || {};
+  const defs = r.defaults || {};
+  state.questions = {};
+  for (const q of Object.keys(r.meta)){
+    state.questions[q] = old[q] || defs[q] || {mode:'trend', dir:1, strength:1};
+  }
+  const kinds = {radio:0, checkbox:0, text:0};
+  Object.values(r.meta).forEach(m => kinds[m.kind] = (kinds[m.kind]||0)+1);
+  $('fetchMsg').className = 'msg ok';
+  $('fetchMsg').innerHTML = `✓ 识别到 <b>${r.count}</b> 个可填项（单选 ${kinds.radio||0} / 多选 ${kinds.checkbox||0} / 填空 ${kinds.text||0}），已自动配好默认值`;
+  changed();
+}
+$('btnFetch').addEventListener('click', () => doParse({url: $('url').value.trim()}));
+$('btnParseHtml').addEventListener('click', () => doParse({url: $('url').value.trim(), html: $('rawHtml').value}));
+
+// 运行控制
+$('btnSave').addEventListener('click', async () => { await save(); $('barHint').textContent = '✓ 已保存到 answer_profile.json'; });
+$('btnRun').addEventListener('click', async () => {
+  await save();
+  const r = await api('/api/run', {profile: state});
+  $('barHint').textContent = r.error ? r.error : '运行中…拖上面的滑块可以实时改重心';
+  if (!r.error) pollLog();
+});
+$('btnStop').addEventListener('click', async () => { await api('/api/stop', {}); $('barHint').textContent = '已发送停止指令'; pollLog(); });
+
+async function pollLog(){
+  const r = await api('/api/log');
+  $('runState').textContent = r.running ? '● 运行中' : '空闲';
+  $('runState').className = 'pill' + (r.running ? ' on' : '');
+  const box = $('log');
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.textContent = r.text || '还没开始。';
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+(async function init(){
+  state = await api('/api/profile');
+  const env = await api('/api/env');
+  $('envState').textContent = env.ok ? '环境就绪' : '⚠ 缺依赖';
+  $('envState').className = 'pill' + (env.ok ? ' on' : ' warn');
+  $('envState').title = env.msg;
+  if (!env.ok) $('barHint').textContent = env.msg;
+  renderTop(); renderQuestions(); preview(); pollLog();
+  setInterval(pollLog, 1200);
+})();
+</script>
+</body>
+</html>

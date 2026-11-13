@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# 运行产物（每次运行会重写）
+wjx_result.csv
+wjx_run.log
+*.json.tmp
+*.tmp
+
+# 诊断用临时文件
+_diag_*.py
+_diag_*.html
+_diag_shots/
+
+# 工作区数据，非临时缓存，不入库
+.workbuddy/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
