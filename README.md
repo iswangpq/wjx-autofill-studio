@@ -68,6 +68,10 @@ python -m unittest discover -s tests -v
 | `wjx_result.csv` | 运行产物，逐份答案（不入库） |
 | `wjx_run.log` | 运行日志（不入库） |
 
+**文件看起来多，其实只有三类是可删的**：`wjx_result.csv`、`wjx_run.log`（每次运行会重写），
+以及 `answer_profile.backup.json`（改配置前留的本地备份，已 `.gitignore` 排除）。
+其余都是项目必要文件；`.git/` 是版本库、`.workbuddy/` 是工作区数据，都不要删。
+
 ---
 
 ## 命令行用法（不想开界面时）
